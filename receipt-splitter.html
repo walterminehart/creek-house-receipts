@@ -1,0 +1,870 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Creek House Receipt Splitter</title>
+<!-- Firebase SDK (compat build for simplicity) -->
+<script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-database-compat.js"></script>
+<style>
+  :root {
+    --bg: #f7f5f0;
+    --panel: #ffffff;
+    --ink: #2b2b2b;
+    --muted: #6b6b6b;
+    --line: #e4e0d8;
+    --accent: #2f6b4f;
+    --accent-soft: #e6f0ea;
+    --warn: #b24a3b;
+    --chip: #eef2f7;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  header {
+    padding: 18px 24px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--line);
+    display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;
+  }
+  header h1 { margin: 0; font-size: 20px; letter-spacing: 0.2px; }
+  header .sub { color: var(--muted); font-size: 13px; display: flex; align-items: center; gap: 10px; }
+  .conn-pill {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 600;
+    background: #eceae4;
+    color: #6b6b6b;
+  }
+  .conn-pill.live { background: #d9f0de; color: #1e6b3a; }
+  .conn-pill.offline { background: #f8d7d1; color: #8a3a2c; }
+  .conn-pill.local { background: #eaeef5; color: #526380; }
+  .layout {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    gap: 18px;
+    padding: 18px;
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 16px;
+  }
+  .panel h2 {
+    margin: 0 0 12px 0;
+    font-size: 14px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--muted);
+  }
+
+  /* People */
+  .person-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    margin-bottom: 8px;
+    background: #fff;
+  }
+  .person-row .name { font-weight: 600; }
+  .person-row .total { font-variant-numeric: tabular-nums; color: var(--accent); font-weight: 600; }
+  .person-row .items-count { color: var(--muted); font-size: 12px; margin-left: 6px; }
+  .person-row .remove {
+    background: none; border: none; color: var(--muted); cursor: pointer; font-size: 16px; padding: 2px 6px;
+  }
+  .person-row .remove:hover { color: var(--warn); }
+
+  .add-person {
+    display: flex; gap: 6px; margin-top: 10px;
+  }
+  .add-person input {
+    flex: 1;
+    padding: 8px 10px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    font-size: 14px;
+  }
+
+  button, .btn {
+    padding: 8px 12px;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+  }
+  button:hover { filter: brightness(1.07); }
+  button.ghost { background: #fff; color: var(--ink); border: 1px solid var(--line); }
+  button.danger { background: var(--warn); }
+  button.small { padding: 4px 8px; font-size: 12px; }
+
+  /* Receipt upload */
+  .upload-area {
+    border: 2px dashed var(--line);
+    border-radius: 8px;
+    padding: 16px;
+    text-align: center;
+    color: var(--muted);
+    cursor: pointer;
+    transition: border-color 0.2s;
+  }
+  .upload-area:hover { border-color: var(--accent); color: var(--accent); }
+  .upload-area input { display: none; }
+  #receiptPreview {
+    margin-top: 10px;
+    max-width: 100%;
+    max-height: 400px;
+    border-radius: 6px;
+    display: none;
+    border: 1px solid var(--line);
+  }
+
+  /* Items table */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+  }
+  th, td {
+    padding: 8px 10px;
+    text-align: left;
+    border-bottom: 1px solid var(--line);
+    vertical-align: middle;
+  }
+  th {
+    background: #faf8f3;
+    font-weight: 600;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--muted);
+  }
+  td.price, th.price { text-align: right; font-variant-numeric: tabular-nums; }
+  td.actions { text-align: center; width: 40px; }
+
+  td input[type="text"], td input[type="number"] {
+    width: 100%;
+    padding: 6px 8px;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    font-size: 14px;
+    background: transparent;
+  }
+  td input[type="text"]:focus, td input[type="number"]:focus {
+    border-color: var(--accent);
+    background: #fff;
+    outline: none;
+  }
+  td input[type="number"] { text-align: right; }
+
+  .assignees {
+    display: flex; flex-wrap: wrap; gap: 4px;
+  }
+  .chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 3px 8px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .chip.unselected {
+    background: var(--chip);
+    color: var(--muted);
+  }
+  .chip.group {
+    border: 1px solid #c9a96a;
+  }
+  .chip.group.unselected {
+    background: #fdf7ea;
+    color: #8a6f3a;
+  }
+  .chip.group:not(.unselected) {
+    background: #f0d98c;
+    color: #5a4518;
+  }
+  .chip:hover { filter: brightness(0.96); }
+
+  .remove-item {
+    background: none; border: none; cursor: pointer; color: var(--muted); font-size: 18px; padding: 2px 6px;
+  }
+  .remove-item:hover { color: var(--warn); }
+
+  .table-footer {
+    margin-top: 14px;
+    display: flex; gap: 10px; flex-wrap: wrap;
+  }
+
+  /* Totals / Extras */
+  .extras-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+  .extras-grid label {
+    display: flex; flex-direction: column; font-size: 12px; color: var(--muted);
+  }
+  .extras-grid input {
+    padding: 6px 10px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    font-size: 14px;
+    margin-top: 4px;
+  }
+
+  .summary {
+    background: var(--accent-soft);
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin-top: 12px;
+  }
+  .summary h3 { margin: 0 0 8px 0; font-size: 14px; color: var(--accent); }
+  .summary-row {
+    display: flex; justify-content: space-between; padding: 3px 0;
+    font-variant-numeric: tabular-nums;
+  }
+  .summary-row.total { border-top: 1px solid rgba(47, 107, 79, 0.3); padding-top: 6px; margin-top: 6px; font-weight: 600; }
+
+  .export-area {
+    margin-top: 14px;
+    padding: 12px;
+    background: #faf8f3;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 13px;
+    white-space: pre-wrap;
+    min-height: 60px;
+  }
+
+  .row-hint {
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 6px;
+  }
+  .empty {
+    padding: 24px;
+    text-align: center;
+    color: var(--muted);
+    font-style: italic;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>🏡 Creek House Receipt Splitter</h1>
+    <div class="sub">
+      <span id="roomLabel"></span>
+      <span id="connStatus" class="conn-pill" title=""></span>
+    </div>
+  </div>
+  <div style="display:flex; gap:8px; flex-wrap: wrap;">
+    <button class="ghost" onclick="newReceipt()" title="Start a fresh shared receipt">＋ New receipt</button>
+    <button class="ghost" onclick="copyShareLink()">🔗 Share link</button>
+    <button class="ghost" onclick="resetAll()">Reset</button>
+  </div>
+</header>
+<div id="setupBanner" style="display:none;background:#fff7e6;border-bottom:1px solid #eccb8a;padding:10px 18px;font-size:13px;color:#8a6f3a;">
+  <strong>Local-only mode.</strong> Paste your Firebase config into the HTML to enable live collaboration across housemates. See SETUP.md for a 5-minute walkthrough.
+</div>
+
+<div class="layout">
+
+  <!-- Left column: People + Receipt -->
+  <div>
+    <div class="panel" style="margin-bottom: 14px;">
+      <h2>👥 Household</h2>
+      <div id="peopleList"></div>
+      <div class="add-person">
+        <input id="newPersonName" type="text" placeholder="Add a name..." onkeydown="if(event.key==='Enter') addPersonFromInput()" />
+        <button onclick="addPersonFromInput()">+ Add</button>
+      </div>
+      <div class="row-hint">Click a name chip on an item row to toggle assignment. Items split equally among everyone assigned.</div>
+    </div>
+
+    <div class="panel">
+      <h2>🧾 Receipt Image</h2>
+      <label class="upload-area" for="receiptInput" id="uploadLabel">
+        <div>Click to upload receipt photo</div>
+        <div style="font-size:12px; margin-top:4px;">(optional, for reference while you enter items)</div>
+        <input id="receiptInput" type="file" accept="image/*" onchange="handleReceiptUpload(event)" />
+      </label>
+      <img id="receiptPreview" alt="Receipt preview" />
+    </div>
+  </div>
+
+  <!-- Right column: Items + Totals -->
+  <div>
+    <div class="panel">
+      <h2>📝 Items</h2>
+      <table id="itemsTable">
+        <thead>
+          <tr>
+            <th style="width: 35%;">Item</th>
+            <th class="price" style="width: 12%;">Price</th>
+            <th>Assigned to (click to toggle)</th>
+            <th class="actions"></th>
+          </tr>
+        </thead>
+        <tbody id="itemsBody"></tbody>
+      </table>
+
+      <div class="table-footer">
+        <button onclick="addItem()">+ Add item</button>
+        <button class="ghost" onclick="addBlankRows(5)">+ 5 blank rows</button>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top: 14px;">
+      <h2>💰 Tax, Tip & Totals</h2>
+      <div class="extras-grid">
+        <label>
+          Tax ($)
+          <input id="taxInput" type="number" step="0.01" min="0" value="0" oninput="render()" />
+        </label>
+        <label>
+          Tip ($)
+          <input id="tipInput" type="number" step="0.01" min="0" value="0" oninput="render()" />
+        </label>
+      </div>
+      <div class="row-hint">Tax and tip are split proportionally to each person's subtotal.</div>
+
+      <div class="summary" id="summary"></div>
+
+      <div style="display:flex; gap: 8px; margin-top: 12px; flex-wrap: wrap;">
+        <button onclick="copyExport()">📋 Copy summary</button>
+        <button class="ghost" onclick="copyVenmoList()">Copy request list</button>
+      </div>
+      <div class="export-area" id="exportArea">Assign some items to see the breakdown.</div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  // ============================================================
+  // FIREBASE CONFIG — paste values from your Firebase project here
+  // See SETUP.md in this folder for a 5-minute walkthrough.
+  // Leave empty to run in local-only mode (localStorage, single device).
+  // ============================================================
+  
+  const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyC-gYX8yT91K7mkNydnHLTCa_N0PN4SwtM",
+  authDomain: "creek-house.firebaseapp.com",
+  databaseURL: "https://creek-house-default-rtdb.firebaseio.com",
+  projectId: "creek-house",
+  storageBucket: "creek-house.firebasestorage.app",
+  messagingSenderId: "491430260994",
+  appId: "1:491430260994:web:256c0ee012474ba788521b"
+};
+
+  const FIREBASE_ENABLED = !!(FIREBASE_CONFIG.databaseURL && FIREBASE_CONFIG.apiKey);
+  const CLIENT_ID = Math.random().toString(36).slice(2, 10);
+  const ROOM_ID = new URLSearchParams(location.search).get("room") || "household";
+  let fbRoomRef = null;
+  let isApplyingRemote = false;
+  let writeTimer = null;
+
+  // ------- State -------
+  const STORAGE_KEY = "creek-house-receipt-v2-" + ROOM_ID;
+  const DEFAULT_ITEMS = [
+    { name: "ORG STRAWBRY",       price: 8.99  },
+    { name: "AFFGRNPWRBWL",       price: 18.99 },
+    { name: "PLAQUE 8PK",         price: 64.99 },
+    { name: "/ SONICARE (coupon)", price: -15.00 },
+    { name: "GRILLO PCKLE",       price: 6.99  },
+    { name: "A2YOGURT",           price: 8.99  },
+    { name: "KS GR FD BTR",       price: 13.99 },
+    { name: "PASTURE EGGS",       price: 15.98 },
+    { name: "LOLLIPEPPERS",       price: 7.49  },
+    { name: "SEAWEED SALD",       price: 10.99 },
+    { name: "ORGANIC GRND",       price: 25.99 },
+    { name: "RICE BOWL",          price: 11.69 },
+    { name: "KS ORG FLOUR",       price: 15.89 },
+    { name: "KING HAWAII",        price: 6.79  },
+    { name: "**KS ULTRA**",       price: 21.99 },
+    { name: "MINI CUKES",         price: 6.99  }
+  ];
+  let _seed = 1;
+  const DEFAULT_PEOPLE = ["Taylor", "Walter", "Stassa", "Dena", "Levi", "Willy", "Stassa and Walter", "Creek House"];
+  const GROUP_ENTITIES = new Set(["Stassa and Walter", "Creek House"]);
+  let state = {
+    people: [...DEFAULT_PEOPLE],
+    items: DEFAULT_ITEMS.map(it => ({ id: _seed++, name: it.name, price: it.price, assignees: [] })),
+    tax: 6.30,
+    tip: 0,
+    receiptDataUrl: null
+  };
+
+  // ------- Persistence -------
+  function commit(opts) {
+    // Save locally + sync to Firebase + re-render
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) {}
+    queueRemoteWrite();
+    render(opts);
+  }
+  function loadState() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        state = Object.assign(state, parsed);
+      }
+    } catch (e) { /* ignore */ }
+    // Ensure newly-added default entities (e.g. "Creek House", "Stassa and Walter") are present
+    DEFAULT_PEOPLE.forEach(p => {
+      if (!state.people.includes(p)) state.people.push(p);
+    });
+  }
+
+  // ------- Firebase sync -------
+  function initFirebase() {
+    const banner = document.getElementById("setupBanner");
+    const pill = document.getElementById("connStatus");
+    if (!FIREBASE_ENABLED) {
+      banner.style.display = "block";
+      pill.textContent = "● Local only";
+      pill.className = "conn-pill local";
+      return;
+    }
+    try {
+      firebase.initializeApp(FIREBASE_CONFIG);
+    } catch (e) {
+      if (!/already exists/i.test(String(e))) {
+        console.error("Firebase init failed", e);
+        pill.textContent = "● Firebase error";
+        pill.className = "conn-pill offline";
+        return;
+      }
+    }
+    const db = firebase.database();
+    fbRoomRef = db.ref(`rooms/${ROOM_ID}`);
+
+    // Connection status
+    db.ref(".info/connected").on("value", (snap) => {
+      if (snap.val()) {
+        pill.textContent = "● Live";
+        pill.className = "conn-pill live";
+        pill.title = "Connected — changes sync in real time";
+      } else {
+        pill.textContent = "● Offline";
+        pill.className = "conn-pill offline";
+        pill.title = "Reconnecting…";
+      }
+    });
+
+    // Initial load + subscribe to changes
+    fbRoomRef.on("value", (snap) => {
+      const data = snap.val();
+      if (!data) {
+        // First time in this room — seed it with our current (possibly default) state
+        queueRemoteWrite(true);
+        return;
+      }
+      if (data.lastWriter === CLIENT_ID) return; // echo of our own write
+      applyRemoteState(data);
+    });
+  }
+
+  function applyRemoteState(data) {
+    isApplyingRemote = true;
+    if (Array.isArray(data.people)) state.people = data.people;
+    if (Array.isArray(data.items)) state.items = data.items;
+    if (typeof data.tax === "number") state.tax = data.tax;
+    if (typeof data.tip === "number") state.tip = data.tip;
+    if (typeof data.receiptDataUrl === "string") state.receiptDataUrl = data.receiptDataUrl;
+    // Re-assert default group entities (in case an older client wrote without them)
+    DEFAULT_PEOPLE.forEach(p => { if (!state.people.includes(p)) state.people.push(p); });
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) {}
+    render();
+    isApplyingRemote = false;
+  }
+
+  function queueRemoteWrite(immediate) {
+    if (!FIREBASE_ENABLED || !fbRoomRef || isApplyingRemote) return;
+    clearTimeout(writeTimer);
+    const doWrite = () => {
+      const payload = {
+        people: state.people,
+        items: state.items,
+        tax: state.tax || 0,
+        tip: state.tip || 0,
+        receiptDataUrl: state.receiptDataUrl || null,
+        lastWriter: CLIENT_ID,
+        lastUpdated: Date.now()
+      };
+      // Skip very large images to avoid hitting realtime DB write limits
+      if (payload.receiptDataUrl && payload.receiptDataUrl.length > 3_000_000) {
+        payload.receiptDataUrl = null;
+      }
+      fbRoomRef.set(payload).catch(err => console.error("Firebase write failed", err));
+    };
+    if (immediate) doWrite();
+    else writeTimer = setTimeout(doWrite, 250);
+  }
+
+  function copyShareLink() {
+    const url = new URL(location.href);
+    url.searchParams.set("room", ROOM_ID);
+    navigator.clipboard.writeText(url.toString()).then(() => {
+      const msg = FIREBASE_ENABLED
+        ? "Share link copied — anyone who opens it will sync live with you"
+        : "Link copied (note: live sync is off, this is just the local URL)";
+      toast(msg);
+    });
+  }
+
+  function newReceipt() {
+    const name = prompt("Name this receipt (or leave blank for a random ID):", "");
+    const id = (name && name.trim()) ? slugify(name) : Math.random().toString(36).slice(2, 8);
+    const url = new URL(location.href);
+    url.searchParams.set("room", id);
+    location.href = url.toString();
+  }
+
+  function slugify(s) {
+    return String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "receipt";
+  }
+  function resetAll() {
+    const msg = FIREBASE_ENABLED
+      ? "Reset this shared receipt for everyone in the room? This cannot be undone."
+      : "Clear all assignments, people edits, and items? (Receipt items will be reset to the Costco defaults.)";
+    if (!confirm(msg)) return;
+    localStorage.removeItem(STORAGE_KEY);
+    state = {
+      people: [...DEFAULT_PEOPLE],
+      items: DEFAULT_ITEMS.map(it => ({ id: _seed++, name: it.name, price: it.price, assignees: [] })),
+      tax: 6.30,
+      tip: 0,
+      receiptDataUrl: null
+    };
+    document.getElementById("taxInput").value = 6.30;
+    document.getElementById("tipInput").value = 0;
+    document.getElementById("receiptPreview").style.display = "none";
+    document.getElementById("receiptPreview").src = "";
+    commit();
+  }
+
+  // ------- People -------
+  function addPersonFromInput() {
+    const input = document.getElementById("newPersonName");
+    const name = input.value.trim();
+    if (!name) return;
+    if (state.people.some(p => p.toLowerCase() === name.toLowerCase())) {
+      alert(name + " is already in the list.");
+      return;
+    }
+    state.people.push(name);
+    input.value = "";
+    commit();
+  }
+  function removePerson(name) {
+    if (!confirm(`Remove ${name}? They'll also be unassigned from any items.`)) return;
+    state.people = state.people.filter(p => p !== name);
+    state.items.forEach(it => {
+      it.assignees = it.assignees.filter(a => a !== name);
+    });
+    commit();
+  }
+
+  // ------- Items -------
+  function addItem(name = "", price = "") {
+    state.items.push({
+      id: Date.now() + Math.random(),
+      name: name,
+      price: price === "" ? "" : parseFloat(price),
+      assignees: []
+    });
+    commit();
+  }
+  function addBlankRows(n) {
+    for (let i = 0; i < n; i++) {
+      state.items.push({ id: Date.now() + Math.random() + i, name: "", price: "", assignees: [] });
+    }
+    commit();
+  }
+  function removeItem(id) {
+    state.items = state.items.filter(it => it.id !== id);
+    commit();
+  }
+  function updateItemField(id, field, value) {
+    const it = state.items.find(x => x.id === id);
+    if (!it) return;
+    if (field === "price") {
+      it.price = value === "" ? "" : parseFloat(value);
+    } else {
+      it[field] = value;
+    }
+    commit({ skipInputs: true });
+  }
+  function toggleAssignee(id, name) {
+    const it = state.items.find(x => x.id === id);
+    if (!it) return;
+    if (it.assignees.includes(name)) {
+      it.assignees = it.assignees.filter(a => a !== name);
+    } else {
+      it.assignees.push(name);
+    }
+    commit();
+  }
+
+  // ------- Receipt image -------
+  function handleReceiptUpload(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      state.receiptDataUrl = e.target.result;
+      const img = document.getElementById("receiptPreview");
+      img.src = e.target.result;
+      img.style.display = "block";
+      commit();
+    };
+    reader.readAsDataURL(file);
+  }
+
+  // ------- Rendering -------
+  function render(opts = {}) {
+    // People list
+    const peopleList = document.getElementById("peopleList");
+    const totals = computeTotals();
+    peopleList.innerHTML = "";
+    if (state.people.length === 0) {
+      peopleList.innerHTML = '<div class="empty">No people yet. Add someone below.</div>';
+    } else {
+      state.people.forEach(name => {
+        const row = document.createElement("div");
+        row.className = "person-row";
+        if (GROUP_ENTITIES.has(name)) {
+          row.style.background = "#fdf7ea";
+          row.style.borderColor = "#c9a96a";
+        }
+        const count = state.items.filter(it => it.assignees.includes(name)).length;
+        const icon = GROUP_ENTITIES.has(name) ? (name === "Creek House" ? "🏡 " : "👥 ") : "";
+        row.innerHTML = `
+          <div>
+            <span class="name">${icon}${escapeHtml(name)}</span>
+            <span class="items-count">${count} item${count === 1 ? "" : "s"}</span>
+          </div>
+          <div style="display:flex; align-items:center; gap: 8px;">
+            <span class="total">$${totals.perPerson[name].total.toFixed(2)}</span>
+            <button class="remove" title="Remove" onclick="removePerson('${escapeJs(name)}')">×</button>
+          </div>
+        `;
+        peopleList.appendChild(row);
+      });
+    }
+
+    // Items table
+    const body = document.getElementById("itemsBody");
+    if (!opts.skipInputs) {
+      body.innerHTML = "";
+      if (state.items.length === 0) {
+        body.innerHTML = `<tr><td colspan="4" class="empty">No items yet. Click "+ Add item" to start.</td></tr>`;
+      } else {
+        state.items.forEach(it => {
+          const tr = document.createElement("tr");
+          tr.dataset.id = it.id;
+          tr.innerHTML = `
+            <td>
+              <input type="text" value="${escapeHtml(it.name)}"
+                placeholder="e.g. milk, wine, paper towels"
+                oninput="updateItemField(${it.id}, 'name', this.value)" />
+            </td>
+            <td class="price">
+              <input type="number" step="0.01" value="${it.price === "" ? "" : it.price}"
+                placeholder="0.00"
+                oninput="updateItemField(${it.id}, 'price', this.value)" />
+            </td>
+            <td>
+              <div class="assignees">
+                ${state.people.map(p => `
+                  <span class="chip ${it.assignees.includes(p) ? "" : "unselected"} ${GROUP_ENTITIES.has(p) ? "group" : ""}"
+                        onclick="toggleAssignee(${it.id}, '${escapeJs(p)}')">${escapeHtml(p)}</span>
+                `).join("")}
+              </div>
+            </td>
+            <td class="actions">
+              <button class="remove-item" title="Remove item" onclick="removeItem(${it.id})">×</button>
+            </td>
+          `;
+          body.appendChild(tr);
+        });
+      }
+    } else {
+      // just refresh chip selection state
+      document.querySelectorAll("#itemsBody tr").forEach(tr => {
+        const id = parseFloat(tr.dataset.id);
+        const it = state.items.find(x => x.id === id);
+        if (!it) return;
+        const chips = tr.querySelectorAll(".assignees .chip");
+        chips.forEach(chip => {
+          const label = chip.textContent;
+          if (label === "All") return;
+          if (it.assignees.includes(label)) chip.classList.remove("unselected");
+          else chip.classList.add("unselected");
+        });
+      });
+    }
+
+    // Summary
+    const summary = document.getElementById("summary");
+    const subtotal = totals.subtotal;
+    const tax = totals.tax;
+    const tip = totals.tip;
+    const grand = subtotal + tax + tip;
+    summary.innerHTML = `
+      <h3>Receipt summary</h3>
+      <div class="summary-row"><span>Subtotal</span><span>$${subtotal.toFixed(2)}</span></div>
+      <div class="summary-row"><span>Tax</span><span>$${tax.toFixed(2)}</span></div>
+      <div class="summary-row"><span>Tip</span><span>$${tip.toFixed(2)}</span></div>
+      <div class="summary-row total"><span>Grand total</span><span>$${grand.toFixed(2)}</span></div>
+      ${totals.unassignedCount > 0 ? `<div style="margin-top:8px;font-size:12px;color:var(--warn);">⚠ ${totals.unassignedCount} item${totals.unassignedCount===1?"":"s"} with a price but no one assigned (not included in per-person totals).</div>` : ""}
+    `;
+
+    // Export area
+    renderExport(totals);
+
+    // Restore receipt image
+    if (state.receiptDataUrl) {
+      const img = document.getElementById("receiptPreview");
+      img.src = state.receiptDataUrl;
+      img.style.display = "block";
+    }
+    document.getElementById("taxInput").value = state.tax;
+    document.getElementById("tipInput").value = state.tip;
+  }
+
+  function computeTotals() {
+    state.tax = parseFloat(document.getElementById("taxInput").value) || 0;
+    state.tip = parseFloat(document.getElementById("tipInput").value) || 0;
+
+    const perPerson = {};
+    state.people.forEach(p => { perPerson[p] = { subtotal: 0, share: 0, total: 0, items: [] }; });
+
+    let subtotal = 0;
+    let assignedSubtotal = 0;
+    let unassignedCount = 0;
+
+    state.items.forEach(it => {
+      const price = typeof it.price === "number" && !isNaN(it.price) ? it.price : 0;
+      subtotal += price;
+      if (it.assignees.length > 0 && price !== 0) {
+        assignedSubtotal += price;
+        const share = price / it.assignees.length;
+        it.assignees.forEach(name => {
+          if (!perPerson[name]) return;
+          perPerson[name].subtotal += share;
+          perPerson[name].items.push({ name: it.name || "(unnamed)", share: share });
+        });
+      } else if (price > 0 && it.assignees.length === 0) {
+        unassignedCount++;
+      }
+    });
+
+    // Distribute tax and tip proportional to each person's subtotal
+    state.people.forEach(p => {
+      const pp = perPerson[p];
+      const ratio = assignedSubtotal > 0 ? pp.subtotal / assignedSubtotal : 0;
+      const taxShare = state.tax * ratio;
+      const tipShare = state.tip * ratio;
+      pp.share = taxShare + tipShare;
+      pp.total = pp.subtotal + pp.share;
+    });
+
+    return {
+      perPerson,
+      subtotal,
+      tax: state.tax,
+      tip: state.tip,
+      unassignedCount
+    };
+  }
+
+  function renderExport(totals) {
+    const lines = [];
+    const date = new Date().toLocaleDateString();
+    lines.push(`Creek House Receipt — ${date}`);
+    lines.push("—".repeat(32));
+    state.people.forEach(p => {
+      const pp = totals.perPerson[p];
+      if (pp.total > 0.005) {
+        lines.push(`${p}: $${pp.total.toFixed(2)}  (items $${pp.subtotal.toFixed(2)} + tax/tip $${pp.share.toFixed(2)})`);
+      } else {
+        lines.push(`${p}: $0.00`);
+      }
+    });
+    lines.push("—".repeat(32));
+    lines.push(`Total: $${(totals.subtotal + totals.tax + totals.tip).toFixed(2)}`);
+    document.getElementById("exportArea").textContent = lines.join("\n");
+  }
+
+  function copyExport() {
+    const text = document.getElementById("exportArea").textContent;
+    navigator.clipboard.writeText(text).then(() => {
+      toast("Summary copied to clipboard");
+    });
+  }
+  function copyVenmoList() {
+    const totals = computeTotals();
+    const lines = [];
+    state.people.forEach(p => {
+      const pp = totals.perPerson[p];
+      if (pp.total > 0.005 && p.toLowerCase() !== "walter") {
+        lines.push(`${p}: $${pp.total.toFixed(2)}`);
+      }
+    });
+    const text = lines.length ? lines.join("\n") : "(no one owes anything yet)";
+    navigator.clipboard.writeText(text).then(() => {
+      toast("Request list copied (excludes Walter)");
+    });
+  }
+  function toast(msg) {
+    const t = document.createElement("div");
+    t.textContent = msg;
+    t.style.cssText = "position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#2b2b2b;color:#fff;padding:10px 16px;border-radius:6px;font-size:14px;z-index:999;";
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), 1800);
+  }
+
+  // ------- Utils -------
+  function escapeHtml(s) {
+    if (s === undefined || s === null) return "";
+    return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+  function escapeJs(s) {
+    return String(s).replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+  }
+
+  // ------- Init -------
+  loadState();
+  document.getElementById("roomLabel").textContent = "Room: " + ROOM_ID;
+  // Auto-save on any input change (captures tax/tip typing)
+  document.addEventListener("input", (e) => {
+    if (e.target && (e.target.id === "taxInput" || e.target.id === "tipInput")) {
+      state.tax = parseFloat(document.getElementById("taxInput").value) || 0;
+      state.tip = parseFloat(document.getElementById("tipInput").value) || 0;
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (err) {}
+      queueRemoteWrite();
+    }
+  });
+  render();
+  initFirebase();
+</script>
+</body>
+</html>
